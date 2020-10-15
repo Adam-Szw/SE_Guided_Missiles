@@ -1,0 +1,937 @@
+	//------------------SETTINGS-------------------------------------------------------------------------------------------------//
+public Program()
+{
+	Runtime.UpdateFrequency = UpdateFrequency.Update1;	//Refresh rate of missile's guidance system. Faster rate means better behavior but may cause the game to slow down. Update1 - one refresh every game
+														//tick. Update10 - one every 10 ticks. Update100 - one every 100 ticks. Tickrate depends on simspeed which can be changed by settings of save.
+}
+public void Main()
+{
+	
+	int radarMode = 0;									//How priming radar works. 0 means static mode where user is responsible for finding target. Cameras will only scan what's in front of them.
+														//1 means active mode - cameras will perform scan of area defined by their cone's boundaries. This setting depend on construction of missile.
+	double cameraCone = 0;								//This setting can be changed in server or world settings. Cone of a camera defines the angle at which it can perform scans, vertically and horizontaly.
+														//Leave it on 0 if you want the script to automatically detect maximum availible cone. This setting is only for initial radar and script will still use
+														//maximum possible cone to keep track of aquired target.
+	double primingRange = 1000;							//How far away will the missile scan for targets, in meters. Targets far away take significantly longer time to be found. This can be limited
+														//by server settings. Script will automatically adjust to it, decreasing range if needed.
+	const double abandonTime = 5;						//How long (in seconds) the missile will be searching for target, in case it looses line of sight on it. After this time missile will fly to last known
+														//position in straight line.
+	//------------------------------------------------------------------------------------------------------------------------//
+	
+	
+	//------------------CHECK STORAGE------------------------------------------//
+	const bool clearStorage = false;
+	if(Storage.Length==0||clearStorage){
+		ClearStorage();
+		AddStorageInt(1);
+		AddStorageLong(0);
+		AddStorageVector3D(new Vector3D(0,0,0));
+		AddStorageVector3D(new Vector3D(0,0,0));
+		AddStorageDouble(0);
+		AddStorageInt(1);
+		AddStorageDouble(0);
+		AddStorageVector3D(new Vector3D(0,0,0));
+		AddStorageDouble(0);
+		AddStorageDouble(0);
+		AddStorageDouble(0);
+		AddStorageDouble(0);
+		AddStorageVector3D(new Vector3D(0,0,0));
+		AddStorageVector3D(new Vector3D(0,0,0));
+		AddStorageVector3D(new Vector3D(0,0,0));
+		}
+	//-----------------MISSILE INFORMATION---------------------------------------//
+	Vector3D missilePosition = GetPVector(Me.GetPosition());
+	Vector3D forwardOrientation = new Vector3D(0,0,0);
+	Vector3D backwardOrientation = new Vector3D(0,0,0);
+	Vector3D upOrientation = new Vector3D(0,0,0);
+	Vector3D downOrientation = new Vector3D(0,0,0);
+	Vector3D leftOrientation = new Vector3D(0,0,0);
+	Vector3D rightOrientation = new Vector3D(0,0,0);
+	bool missileMovement = false;
+	bool missileTurning = false;
+
+	//------------------BLOCK DECLARATIONS--------------------------------------//
+	IMyRemoteControl[] remoteControl = new IMyRemoteControl[1000];
+	List<IMyTerminalBlock> remoteControlList = new List<IMyTerminalBlock>();
+	GridTerminalSystem.GetBlocksOfType<IMyRemoteControl>(remoteControlList);
+	if(remoteControlList.Count!=0){
+		for(int i=0;i<remoteControlList.Count;i++){
+			remoteControl[i]=(IMyRemoteControl)remoteControlList[i];
+			}
+		missilePosition = GetPVector(remoteControl[0].GetPosition());
+		forwardOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Forward);
+		backwardOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Backward);
+		upOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Up);
+		downOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Down);
+		leftOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Left);
+		rightOrientation = GetPVector(remoteControl[0].WorldMatrix.GetOrientation().Right);
+		}
+	else{
+		missilePosition = GetPVector(Me.GetPosition());
+		forwardOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Forward);
+		backwardOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Backward);
+		upOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Up);
+		downOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Down);
+		leftOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Left);
+		rightOrientation = GetPVector(Me.WorldMatrix.GetOrientation().Right);
+		}
+	Vector3D missileVelocityVector = GetPVector(missilePosition-ReadStorageVector3D(8));
+	if(missileVelocityVector==new Vector3D(0,0,0)){
+		missileVelocityVector = forwardOrientation;
+		}
+	IMyCameraBlock[] camera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] forwardCamera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] backwardCamera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] upCamera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] downCamera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] leftCamera = new IMyCameraBlock[1000];
+	IMyCameraBlock[] rightCamera = new IMyCameraBlock[1000];
+	List<IMyTerminalBlock> cameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> forwardCameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> backwardCameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> upCameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> downCameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> leftCameraList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> rightCameraList = new List<IMyTerminalBlock>();
+	GridTerminalSystem.GetBlocksOfType<IMyCameraBlock>(cameraList);
+	if(cameraList.Count!=0){
+		for(int i=0;i<cameraList.Count;i++){
+			camera[i]=(IMyCameraBlock)cameraList[i];
+			Vector3D cameraOrientation = GetPVector(camera[i].WorldMatrix.GetOrientation().Forward);
+			if(cameraOrientation==forwardOrientation){
+				forwardCameraList.Add(camera[i]);
+				}
+			if(cameraOrientation==backwardOrientation){
+				backwardCameraList.Add(camera[i]);
+				}
+			if(cameraOrientation==upOrientation){
+				upCameraList.Add(camera[i]);
+				}
+			if(cameraOrientation==downOrientation){
+				downCameraList.Add(camera[i]);
+				}
+			if(cameraOrientation==leftOrientation){
+				leftCameraList.Add(camera[i]);
+				}
+			if(cameraOrientation==rightOrientation){
+				rightCameraList.Add(camera[i]);
+				}
+			//setup max scan settings
+			if(cameraCone==0){
+				cameraCone = camera[i].RaycastConeLimit;
+				}
+			cameraCone = Math.Min(cameraCone,camera[i].RaycastConeLimit);
+			if(camera[i].RaycastDistanceLimit>0){
+				primingRange = Math.Min(primingRange,camera[i].RaycastDistanceLimit);
+				}
+			}
+		}
+	if(forwardCameraList.Count!=0){
+		for(int i=0;i<forwardCameraList.Count;i++){
+			forwardCamera[i]=(IMyCameraBlock)forwardCameraList[i];
+			}
+		}
+	if(backwardCameraList.Count!=0){
+		for(int i=0;i<backwardCameraList.Count;i++){
+			backwardCamera[i]=(IMyCameraBlock)backwardCameraList[i];
+			}
+		}
+	if(upCameraList.Count!=0){
+		for(int i=0;i<upCameraList.Count;i++){
+			upCamera[i]=(IMyCameraBlock)upCameraList[i];
+			}
+		}
+	if(downCameraList.Count!=0){
+		for(int i=0;i<downCameraList.Count;i++){
+			downCamera[i]=(IMyCameraBlock)downCameraList[i];
+			}
+		}
+	if(leftCameraList.Count!=0){
+		for(int i=0;i<leftCameraList.Count;i++){
+			leftCamera[i]=(IMyCameraBlock)leftCameraList[i];
+			}
+		}
+	if(rightCameraList.Count!=0){
+		for(int i=0;i<rightCameraList.Count;i++){
+			rightCamera[i]=(IMyCameraBlock)rightCameraList[i];
+			}
+		}
+	IMyThrust[] thruster = new IMyThrust[1000];
+	IMyThrust[] forwardThruster = new IMyThrust[1000];
+	IMyThrust[] backwardThruster = new IMyThrust[1000];
+	IMyThrust[] upThruster = new IMyThrust[1000];
+	IMyThrust[] downThruster = new IMyThrust[1000];
+	IMyThrust[] leftThruster = new IMyThrust[1000];
+	IMyThrust[] rightThruster = new IMyThrust[1000];
+	List<IMyTerminalBlock> thrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> forwardThrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> backwardThrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> upThrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> downThrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> leftThrusterList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> rightThrusterList = new List<IMyTerminalBlock>();
+	GridTerminalSystem.GetBlocksOfType<IMyThrust>(thrusterList);
+	if(thrusterList.Count!=0){
+		for(int i=0;i<thrusterList.Count;i++){
+			thruster[i]=(IMyThrust)thrusterList[i];
+			Vector3D thrusterOrientation = GetPVector(thruster[i].WorldMatrix.GetOrientation().Forward);
+			if(thrusterOrientation==backwardOrientation){
+				forwardThrusterList.Add(thruster[i]);
+				}
+			if(thrusterOrientation==forwardOrientation){
+				backwardThrusterList.Add(thruster[i]);
+				}
+			if(thrusterOrientation==downOrientation){
+				upThrusterList.Add(thruster[i]);
+				}
+			if(thrusterOrientation==upOrientation){
+				downThrusterList.Add(thruster[i]);
+				}
+			if(thrusterOrientation==rightOrientation){
+				leftThrusterList.Add(thruster[i]);
+				}
+			if(thrusterOrientation==leftOrientation){
+				rightThrusterList.Add(thruster[i]);
+				}
+			}
+		}
+	if(forwardThrusterList.Count!=0){
+		for(int i=0;i<forwardThrusterList.Count;i++){
+			forwardThruster[i]=(IMyThrust)forwardThrusterList[i];
+			}
+		}
+	if(backwardThrusterList.Count!=0){
+		for(int i=0;i<backwardThrusterList.Count;i++){
+			backwardThruster[i]=(IMyThrust)backwardThrusterList[i];
+			}
+		}
+	if(leftThrusterList.Count!=0){
+		for(int i=0;i<leftThrusterList.Count;i++){
+			leftThruster[i]=(IMyThrust)leftThrusterList[i];
+			}
+		}
+	if(rightThrusterList.Count!=0){
+		for(int i=0;i<rightThrusterList.Count;i++){
+			rightThruster[i]=(IMyThrust)rightThrusterList[i];
+			}
+		}
+	if(upThrusterList.Count!=0){
+		for(int i=0;i<upThrusterList.Count;i++){
+			upThruster[i]=(IMyThrust)upThrusterList[i];
+			}
+		}
+	if(downThrusterList.Count!=0){
+		for(int i=0;i<downThrusterList.Count;i++){
+			downThruster[i]=(IMyThrust)downThrusterList[i];
+			}
+		}
+	IMyGyro[] gyroscope = new IMyGyro[1000];
+	IMyGyro[] forwardGyroscope = new IMyGyro[1000];
+	IMyGyro[] backwardGyroscope = new IMyGyro[1000];
+	IMyGyro[] upGyroscope = new IMyGyro[1000];
+	IMyGyro[] downGyroscope = new IMyGyro[1000];
+	IMyGyro[] leftGyroscope = new IMyGyro[1000];
+	IMyGyro[] rightGyroscope = new IMyGyro[1000];
+	List<IMyTerminalBlock> gyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> forwardGyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> backwardGyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> upGyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> downGyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> leftGyroscopeList = new List<IMyTerminalBlock>();
+	List<IMyTerminalBlock> rightGyroscopeList = new List<IMyTerminalBlock>();
+	GridTerminalSystem.GetBlocksOfType<IMyGyro>(gyroscopeList);
+	if(gyroscopeList.Count!=0){
+		for(int i=0;i<gyroscopeList.Count;i++){
+			gyroscope[i]=(IMyGyro)gyroscopeList[i];
+			Vector3D gyroscopeOrientation = GetPVector(gyroscope[i].WorldMatrix.GetOrientation().Forward);
+			if(gyroscopeOrientation==forwardOrientation){
+				forwardGyroscopeList.Add(gyroscope[i]);
+				}
+			if(gyroscopeOrientation==backwardOrientation){
+				backwardGyroscopeList.Add(gyroscope[i]);
+				}
+			if(gyroscopeOrientation==upOrientation){
+				upGyroscopeList.Add(gyroscope[i]);
+				}
+			if(gyroscopeOrientation==downOrientation){
+				downGyroscopeList.Add(gyroscope[i]);
+				}
+			if(gyroscopeOrientation==leftOrientation){
+				leftGyroscopeList.Add(gyroscope[i]);
+				}
+			if(gyroscopeOrientation==rightOrientation){
+				rightGyroscopeList.Add(gyroscope[i]);
+				}
+			}
+		}
+	if(forwardGyroscopeList.Count!=0){
+		for(int i=0;i<forwardGyroscopeList.Count;i++){
+			forwardGyroscope[i]=(IMyGyro)forwardGyroscopeList[i];
+			}
+		}
+	if(backwardGyroscopeList.Count!=0){
+		for(int i=0;i<backwardGyroscopeList.Count;i++){
+			backwardGyroscope[i]=(IMyGyro)backwardGyroscopeList[i];
+			}
+		}
+	if(upGyroscopeList.Count!=0){
+		for(int i=0;i<upGyroscopeList.Count;i++){
+			upGyroscope[i]=(IMyGyro)upGyroscopeList[i];
+			}
+		}
+	if(downGyroscopeList.Count!=0){
+		for(int i=0;i<downGyroscopeList.Count;i++){
+			downGyroscope[i]=(IMyGyro)downGyroscopeList[i];
+			}
+		}
+	if(leftGyroscopeList.Count!=0){
+		for(int i=0;i<leftGyroscopeList.Count;i++){
+			leftGyroscope[i]=(IMyGyro)leftGyroscopeList[i];
+			}
+		}
+	if(rightGyroscopeList.Count!=0){
+		for(int i=0;i<rightGyroscopeList.Count;i++){
+			rightGyroscope[i]=(IMyGyro)rightGyroscopeList[i];
+			}
+		}
+	IMyTextSurface[] textSurface = new IMyTextSurface[1000];
+	List<IMyTerminalBlock> textSurfaceList = new List<IMyTerminalBlock>();
+	GridTerminalSystem.GetBlocksOfType<IMyTextSurface>(textSurfaceList);
+	if(textSurfaceList.Count!=0){
+		for(int i=0;i<textSurfaceList.Count;i++){
+			textSurface[i]=(IMyTextSurface)textSurfaceList[i];
+			}
+		}
+	
+	//-----------------CAMERA-BASED RADAR OPERATIONS-------------------------------//
+	//general data
+	double timeSinceLastScan = ReadStorageDouble(5)+Runtime.TimeSinceLastRun.TotalSeconds;
+	bool scanPerformed = false;
+	bool hitConfirmed = false;
+	int scanningStage = ReadStorageInt(1);
+	int searchingStage = ReadStorageInt(6);
+	//scanned target data
+	MyDetectedEntityInfo scan;
+	long targetID = 0;
+	string targetName = "";
+	MyDetectedEntityType targetType = MyDetectedEntityType.Unknown;
+	Vector3D? targetHitPosition = new Vector3D(0,0,0);
+	Vector3D targetVelocityVector = new Vector3D(0,0,0);
+	MyRelationsBetweenPlayerAndBlock targetRelationship = MyRelationsBetweenPlayerAndBlock.NoOwnership;
+	Vector3D targetPosition = new Vector3D(0,0,0);
+	//calculated target data
+	Vector3D targetAccelerationVector = new Vector3D(0,0,0);
+	Vector3D targetPositionPredicted = new Vector3D(0,0,0);
+	double targetMaxRecordedAcceleration = ReadStorageDouble(7);
+			
+	//prepare the cameras for operations.
+	for(int i=0;i<cameraList.Count;i++){
+		camera[i].ApplyAction("OnOff_On");
+		camera[i].EnableRaycast = true;
+		}
+	
+	//switch depending on state
+	switch(scanningStage){
+		case 1:
+			//initial priming
+			missileMovement = false;
+			missileTurning = false;
+			if(radarMode == 0){
+				//static radar
+				for(int i=0;i<cameraList.Count;i++){
+					if(camera[i].CanScan(primingRange)){
+						scanPerformed = true;
+						scan = camera[i].Raycast(primingRange,0,0);
+						if(scan.HitPosition.HasValue){
+							timeSinceLastScan = 0;
+							hitConfirmed = true;
+							targetID = scan.EntityId;
+							targetName = scan.Name;
+							targetType = scan.Type;
+							targetHitPosition = scan.HitPosition;
+							targetVelocityVector = scan.Velocity;
+							targetRelationship = scan.Relationship;
+							targetPosition = scan.Position;
+							break;
+							}
+						}
+					}
+				}
+			if(radarMode == 1){
+				//active radar
+				}
+			break;
+		case 2:
+			//continous tracking - load last values for prediction
+			missileMovement = true;
+			missileTurning = true;
+			targetID = ReadStorageLong(2);
+			targetVelocityVector = ReadStorageVector3D(3);
+			targetPosition = ReadStorageVector3D(4);
+			//create prediction of position
+			targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,timeSinceLastScan);
+			//perform a scan to predicted location
+			for(int i=0;i<cameraList.Count;i++){
+				if(camera[i].CanScan(targetPositionPredicted)){
+					scanPerformed = true;
+					scan = camera[i].Raycast(targetPositionPredicted);
+					if(scan.HitPosition.HasValue){
+						timeSinceLastScan = 0;
+						hitConfirmed = true;
+						targetID = scan.EntityId;
+						targetName = scan.Name;
+						targetType = scan.Type;
+						targetHitPosition = scan.HitPosition;
+						targetAccelerationVector = scan.Velocity-targetVelocityVector;
+						targetVelocityVector = scan.Velocity;
+						targetRelationship = scan.Relationship;
+						targetPosition = scan.Position;
+						if(targetAccelerationVector.Length()>targetMaxRecordedAcceleration){
+							targetMaxRecordedAcceleration = targetAccelerationVector.Length();
+							}
+						break;
+						}
+					}
+				}
+			break;
+		case 3:
+			//switch searching techniques
+			missileMovement = false;
+			missileTurning = true;
+			targetID = ReadStorageLong(2);
+			targetVelocityVector = ReadStorageVector3D(3);
+			targetPosition = ReadStorageVector3D(4);
+			if(searchingStage>=1&&searchingStage<=71&&searchingStage!=41){
+				for(int i=0;i<cameraList.Count;i++){
+					if(searchingStage<=20){
+						//20 scans every 0.1 second into future
+						targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,timeSinceLastScan+(searchingStage/10));
+						}
+					if(searchingStage<=40&&searchingStage>20){
+						//20 scans every 0.1 second into past
+						targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,timeSinceLastScan-((searchingStage-20)/10));
+						}
+					if(searchingStage==41){
+						//check predicted position again
+						targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,timeSinceLastScan);
+						}
+					if(searchingStage<=71&&searchingStage>41){
+						//random acceleration search
+						Vector3D randomTargetAccelerationVector = new Vector3D(targetMaxRecordedAcceleration*GetRandomNumber(-1,1),targetMaxRecordedAcceleration*GetRandomNumber(-1,1),targetMaxRecordedAcceleration*GetRandomNumber(-1,1));
+						targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,randomTargetAccelerationVector,timeSinceLastScan);
+						}
+					if(searchingStage>71){
+						//repeat the process
+						searchingStage=1;
+						targetPositionPredicted = CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,timeSinceLastScan);
+						}
+					if(camera[i].CanScan(targetPositionPredicted)){
+						searchingStage+=1;
+						scanPerformed = true;
+						scan = camera[i].Raycast(targetPositionPredicted);
+						if(scan.HitPosition.HasValue){
+							timeSinceLastScan = 0;
+							hitConfirmed = true;
+							targetID = scan.EntityId;
+							targetName = scan.Name;
+							targetType = scan.Type;
+							targetHitPosition = scan.HitPosition;
+							targetAccelerationVector = scan.Velocity-targetVelocityVector;
+							targetVelocityVector = scan.Velocity;
+							targetRelationship = scan.Relationship;
+							targetPosition = scan.Position;
+							if(targetAccelerationVector.Length()>targetMaxRecordedAcceleration){
+								targetMaxRecordedAcceleration = targetAccelerationVector.Length();
+								}
+							}
+						}
+					}
+				}
+			break;
+		}
+	
+	//decide what to do based on outcome of the scan
+	if(scanPerformed){
+		if(hitConfirmed){
+			//target found.
+			switch(scanningStage){
+				case 1:
+					//begin tracking.
+					scanningStage = 2;
+					break;
+				case 2:
+					//keep tracking.
+					break;
+				case 3:
+					//save data and return to normal tracking.
+					scanningStage = 2;
+					break;
+				}
+			}
+		else{
+			//target not found.
+			switch(scanningStage){
+				case 1:
+					//keep priming.
+					break;
+				case 2:
+					//target lost - begin search.
+					scanningStage = 3;
+					break;
+				case 3:
+					if(timeSinceLastScan>abandonTime){
+						//couldnt re-aquire target, abandon search.
+						timeSinceLastScan = 0;
+						scanningStage = 1;
+						searchingStage = 1;
+						targetMaxRecordedAcceleration = 0;
+					}
+					break;
+				}
+			}
+		}
+	else{
+		if(scanningStage==3){
+			//couldnt perform search
+			searchingStage+=1;
+			}
+		if(timeSinceLastScan>abandonTime){
+			//out of range of cameras - abandon search.
+			timeSinceLastScan = 0;
+			scanningStage = 1;
+			searchingStage = 1;
+			targetMaxRecordedAcceleration = 0;
+			}
+		}
+		
+	//-----------------------------OPTIMAL TRAJECTORY CALCULATIONS--------------//
+	const int simulationTime = 20;		//amount of time in the future trajectory calculations will take into consideration
+	const int simulationAccuracy = 100;	//amount of fractions per second that will be taken into consideration
+	Vector3D targetPassingPoint = new Vector3D(0,0,0);
+	Vector3D missilePassingPoint = new Vector3D(0,0,0);
+	double passingDistance = GetPDouble((targetPosition-missilePosition).Length());
+	double passingTime = 0;
+	Vector3D desiredTargetPoint = new Vector3D(0,0,0);
+	double timeToCollision = 0;
+	//calculate closest passing point of trajectories
+	for(double i=1;i<(simulationTime*simulationAccuracy);i++){
+		targetPassingPoint = GetPVector(CalculateTrajectoryPrediction(targetPosition,targetVelocityVector,targetAccelerationVector,i/simulationAccuracy));
+		missilePassingPoint = GetPVector(CalculateTrajectoryPrediction(missilePosition,missileVelocityVector,new Vector3D(0,0,0),i/simulationAccuracy));
+		if(GetPDouble((targetPassingPoint-missilePassingPoint).Length())<=passingDistance){
+			//getting closer
+			passingDistance=GetPDouble((targetPassingPoint-missilePassingPoint).Length());
+			passingTime = i/simulationAccuracy;
+			}
+		if(GetPDouble((targetPassingPoint-missilePassingPoint).Length())>passingDistance){
+			//getting away
+			if(i<=1){
+				//opposite trajectories
+				passingDistance = 99999;
+				passingTime = 99999;
+				targetPassingPoint = targetPosition;
+				}
+			break;
+			}
+		}
+	timeToCollision = passingTime;
+	desiredTargetPoint = targetPassingPoint;
+	
+	//-----------------------------OPTIMAL MISSILE MOVEMENT CALCULATIONS---------//
+	Vector3D missileTarget = new Vector3D(0,0,0);
+	double distanceToTarget = (GetPVector(targetPosition-missilePosition)).Length();
+	Vector3D missileDesiredAccelerationVector = new Vector3D(0,0,0);
+	Vector3D missileAdjustmentVector = new Vector3D(0,0,0);
+	Vector3D missileDesiredVelocityVector = new Vector3D(0,0,0);
+	Vector3D toEnemyVector = GetNormal(targetPosition-missilePosition);
+	double missileVelocity = GetPDouble(missileVelocityVector.Length());
+	double targetPredictabilityRatio = 1;
+	Vector3D missileVelocityVectorAdjusted = forwardOrientation;
+	if(missileVelocityVector!=new Vector3D(0,0,0)){
+		missileVelocityVectorAdjusted = GetNormal(missileVelocityVector);
+		}
+	
+	
+	missileTarget = GetPVector(targetPosition+(desiredTargetPoint-targetPosition)*targetPredictabilityRatio);
+	missileDesiredVelocityVector = GetNormal(missileTarget-missilePosition);
+	missileAdjustmentVector = GetNormal(GetAdjustmentVector(missileDesiredVelocityVector,missileVelocityVectorAdjusted));
+	
+	double missileAdjustmentOffsetFactor = Math.Pow((((GetProjection(missileVelocityVectorAdjusted,missileAdjustmentVector)).Length())/1),1);
+	double missileAdjustmentRatio = GetClamp(missileAdjustmentOffsetFactor,0,1);
+	
+
+	missileDesiredAccelerationVector = missileDesiredVelocityVector+((missileAdjustmentVector-missileDesiredVelocityVector)*missileAdjustmentRatio);
+
+	
+	//split acceleration vector
+	Vector3D desiredAccelerationVectorForward = GetProjection(missileDesiredAccelerationVector,forwardOrientation);
+	if((forwardOrientation+desiredAccelerationVectorForward).Length()<desiredAccelerationVectorForward.Length()){
+		desiredAccelerationVectorForward = new Vector3D(0,0,0);
+		}
+	Vector3D desiredAccelerationVectorBackward = GetProjection(missileDesiredAccelerationVector,backwardOrientation);
+	if((backwardOrientation+desiredAccelerationVectorBackward).Length()<desiredAccelerationVectorBackward.Length()){
+		desiredAccelerationVectorBackward = new Vector3D(0,0,0);
+		}
+	Vector3D desiredAccelerationVectorLeft = GetProjection(missileDesiredAccelerationVector,leftOrientation);
+	if((leftOrientation+desiredAccelerationVectorLeft).Length()<desiredAccelerationVectorLeft.Length()){
+		desiredAccelerationVectorLeft = new Vector3D(0,0,0);
+		}
+	Vector3D desiredAccelerationVectorRight = GetProjection(missileDesiredAccelerationVector,rightOrientation);
+	if((rightOrientation+desiredAccelerationVectorRight).Length()<desiredAccelerationVectorRight.Length()){
+		desiredAccelerationVectorRight = new Vector3D(0,0,0);
+		}
+	Vector3D desiredAccelerationVectorUp = GetProjection(missileDesiredAccelerationVector,upOrientation);
+	if((upOrientation+desiredAccelerationVectorUp).Length()<desiredAccelerationVectorUp.Length()){
+		desiredAccelerationVectorUp = new Vector3D(0,0,0);
+		}
+	Vector3D desiredAccelerationVectorDown = GetProjection(missileDesiredAccelerationVector,downOrientation);
+	if((downOrientation+desiredAccelerationVectorDown).Length()<desiredAccelerationVectorDown.Length()){
+		desiredAccelerationVectorDown = new Vector3D(0,0,0);
+		}
+	
+	//-----------------------------OPTIMAL MISSILE ORIENTATION CALCULATIONS------//
+	//Check if missile is allowed to turn to calculated angle. find closest angle if not.
+	//IMPORTANT - options other than 1 work only if camera operation cone is at least 45 degrees (vanilla setting)
+	int camerasStatus = 1;		//1=only frontal cameras (missile won't turn away from scan boundaries when dependent on cameras)
+								//2=frontal and side cameras (missile will turn to show its side to target if needed)
+								//3=surround mode (missile won't care about detection and will turn however it needs to satisfy needed thrust)
+	if(upCameraList.Count>0&&downCameraList.Count>0&&leftCameraList.Count>0&&rightCameraList.Count>0){
+		camerasStatus = 2;
+		}
+	if(forwardCameraList.Count==0||(camerasStatus==2&&backwardCameraList.Count>0)){
+		camerasStatus = 3;
+		}
+	if(cameraCone<45){
+		camerasStatus = 1;
+		}
+	Vector3D lastDesiredOrientationVector1 = ReadStorageVector3D(13);
+	Vector3D lastDesiredOrientationVector2 = ReadStorageVector3D(14);
+	Vector3D lastDesiredOrientationVector3 = ReadStorageVector3D(15);
+	Vector3D desiredOrientationVector = GetNormal(missileDesiredVelocityVector);
+	desiredOrientationVector = (desiredOrientationVector+lastDesiredOrientationVector1+lastDesiredOrientationVector2+lastDesiredOrientationVector3)/4;
+	double maxAngleDifference = 0;
+	double angleDifference = GetAngleBetweenVectors(toEnemyVector,desiredOrientationVector);
+	//change permitted angle
+	switch(camerasStatus){
+		case 1:
+			maxAngleDifference = cameraCone-5; //5 degree of safety
+			break;
+		case 2:
+			maxAngleDifference = 85+cameraCone; //5 degree of safety
+			break;
+		case 3:
+			maxAngleDifference = 180; //any angle
+			break;
+		}
+	//search for closest permitted angle
+	for(int i=0;i<100;i++){
+		angleDifference = GetAngleBetweenVectors(toEnemyVector,desiredOrientationVector);
+		if(angleDifference>maxAngleDifference){
+			desiredOrientationVector=GetNormal(missileDesiredAccelerationVector+((toEnemyVector-missileDesiredAccelerationVector)*i/100));
+			}
+		else{
+			break;
+			}
+		}
+		
+	//-----------------------------PID CONTROL----------------------------------//
+	//gyroscope control
+	double yawAngleDifference = GetAngleBetweenVectors(GetProjection(desiredOrientationVector,forwardOrientation)+GetProjection(desiredOrientationVector,rightOrientation),forwardOrientation);
+	double lastYawAngleDifference = ReadStorageDouble(9);
+	if((GetNormal(GetCrossProduct((GetProjection(desiredOrientationVector,forwardOrientation)+GetProjection(desiredOrientationVector,rightOrientation)),forwardOrientation))+upOrientation).Length()<1){
+		yawAngleDifference = -yawAngleDifference;
+		}
+	double pitchAngleDifference = GetAngleBetweenVectors(GetProjection(desiredOrientationVector,forwardOrientation)+GetProjection(desiredOrientationVector,upOrientation),forwardOrientation);
+	double lastPitchAngleDifference = ReadStorageDouble(10);
+	if((GetNormal(GetCrossProduct((GetProjection(desiredOrientationVector,forwardOrientation)+GetProjection(desiredOrientationVector,upOrientation)),forwardOrientation))+rightOrientation).Length()<1){
+		pitchAngleDifference = -pitchAngleDifference;
+		}
+	double gyroMaxRPM = 60;
+	double PIDkpYaw = 0.6;
+	double PIDkiYaw = 0;
+	double PIDkdYaw = 0.4;
+	double PIDkpPitch = 0.6;
+	double PIDkiPitch = 0;
+	double PIDkdPitch = 0.4;
+	double totalIntegralErrorYaw = ReadStorageDouble(11)+(yawAngleDifference*timeSinceLastScan);
+	double totalIntegralErrorPitch = ReadStorageDouble(12)+(pitchAngleDifference*timeSinceLastScan);
+	if(hitConfirmed==false){
+		//reset PID errors for gyroscopes
+		totalIntegralErrorYaw = 0;
+		totalIntegralErrorPitch = 0;
+		}
+	double PYaw = PIDkpYaw*yawAngleDifference;
+	double IYaw = PIDkiYaw*totalIntegralErrorYaw;
+	double DYaw = PIDkdYaw*(yawAngleDifference-lastYawAngleDifference);
+	double PPitch = PIDkpPitch*pitchAngleDifference;
+	double IPitch = PIDkiPitch*totalIntegralErrorPitch;
+	double DPitch = PIDkdPitch*(pitchAngleDifference-lastPitchAngleDifference);
+	double GyroYawValue = Math.Max(Math.Min((PYaw+IYaw+DYaw)/180,1),-1)*gyroMaxRPM;
+	double GyroPitchValue = Math.Max(Math.Min((PPitch+IPitch+DPitch)/180,1),-1)*gyroMaxRPM;
+	
+	
+	//-----------------------------ACTIVATE THRUSTERS AND GYROSCOPES------------//
+	//activate thrusters
+	//missileMovement = false;
+	//missileTurning = false;
+	if(missileMovement){
+		for(var i=0;i<thrusterList.Count;i++){
+			thruster[i].ApplyAction("OnOff_On");
+			}
+		for(var i=0;i<forwardThrusterList.Count;i++){
+			if(desiredAccelerationVectorForward==new Vector3D(0,0,0)){
+				forwardThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				forwardThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorForward.Length()*100);
+				}
+			}
+		for(var i=0;i<backwardThrusterList.Count;i++){
+			if(desiredAccelerationVectorBackward==new Vector3D(0,0,0)){
+				backwardThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				backwardThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorBackward.Length()*100);
+				}
+			}
+		for(var i=0;i<leftThrusterList.Count;i++){
+			if(desiredAccelerationVectorLeft==new Vector3D(0,0,0)){
+				leftThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				leftThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorLeft.Length()*100);
+				}
+			}
+		for(var i=0;i<rightThrusterList.Count;i++){
+			if(desiredAccelerationVectorRight==new Vector3D(0,0,0)){
+				rightThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				rightThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorRight.Length()*100);
+				}
+			}
+		for(var i=0;i<upThrusterList.Count;i++){
+			if(desiredAccelerationVectorUp==new Vector3D(0,0,0)){
+				upThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				upThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorUp.Length()*100);
+				}
+			}
+		for(var i=0;i<downThrusterList.Count;i++){
+			if(desiredAccelerationVectorDown==new Vector3D(0,0,0)){
+				downThruster[i].ThrustOverridePercentage = 0f;
+				}
+			else{
+				downThruster[i].ThrustOverridePercentage = (float)(desiredAccelerationVectorDown.Length()*100);
+				}
+			}
+		}
+	else{
+		for(var i=0;i<thrusterList.Count;i++){
+			thruster[i].ThrustOverridePercentage = 0f;
+			}
+		}
+	if(missileTurning){
+		for(var i=0;i<gyroscopeList.Count;i++){
+			gyroscope[i].ApplyAction("OnOff_On");
+			gyroscope[i].GyroOverride = true;
+			}
+		for(var i=0;i<forwardGyroscopeList.Count;i++){
+			forwardGyroscope[i].Yaw = (float)GyroYawValue;
+			forwardGyroscope[i].Pitch = (float)GyroPitchValue;
+			forwardGyroscope[i].Roll = 0f;
+			}
+		for(var i=0;i<backwardGyroscopeList.Count;i++){
+			backwardGyroscope[i].Yaw = (float)GyroYawValue;
+			backwardGyroscope[i].Pitch = (float)-GyroPitchValue;
+			backwardGyroscope[i].Roll = 0f;
+			}
+		for(var i=0;i<upGyroscopeList.Count;i++){
+			upGyroscope[i].Yaw = 0f;
+			upGyroscope[i].Pitch = (float)GyroPitchValue;
+			upGyroscope[i].Roll = (float)-GyroYawValue;
+			}
+		for(var i=0;i<downGyroscopeList.Count;i++){
+			downGyroscope[i].Yaw = 0f;
+			downGyroscope[i].Pitch = (float)-GyroPitchValue;
+			downGyroscope[i].Roll = (float)GyroYawValue;
+			}
+		for(var i=0;i<leftGyroscopeList.Count;i++){
+			leftGyroscope[i].Yaw = (float)-GyroYawValue;
+			leftGyroscope[i].Pitch = 0f;
+			leftGyroscope[i].Roll = (float)-GyroPitchValue;
+			}
+		for(var i=0;i<rightGyroscopeList.Count;i++){
+			rightGyroscope[i].Yaw = (float)GyroYawValue;
+			rightGyroscope[i].Pitch = 0f;
+			rightGyroscope[i].Roll = (float)GyroPitchValue;
+			}
+		}
+	else{
+		for(var i=0;i<gyroscopeList.Count;i++){
+			gyroscope[i].ApplyAction("OnOff_On");
+			gyroscope[i].Yaw = 0f;
+			gyroscope[i].Pitch = 0f;
+			gyroscope[i].Roll = 0f;
+			gyroscope[i].GyroOverride = false;
+			}
+		}
+
+	if(textSurfaceList.Count!=0){
+		textSurface[0].WriteText((maxAngleDifference).ToString(),false);
+		textSurface[0].WriteText("\n",true);
+		textSurface[0].WriteText((angleDifference).ToString(),true);
+	}
+
+	//-----------------------------SAVE STORAGE---------------------------------//
+	ClearStorage();
+	AddStorageInt(scanningStage);
+	AddStorageLong(targetID);
+	AddStorageVector3D(targetVelocityVector);
+	AddStorageVector3D(targetPosition);
+	AddStorageDouble(timeSinceLastScan);
+	AddStorageInt(searchingStage);
+	AddStorageDouble(targetMaxRecordedAcceleration);
+	AddStorageVector3D(missilePosition);
+	AddStorageDouble(yawAngleDifference);
+	AddStorageDouble(pitchAngleDifference);
+	AddStorageDouble(totalIntegralErrorYaw);
+	AddStorageDouble(totalIntegralErrorPitch);
+	AddStorageVector3D(lastDesiredOrientationVector2);
+	AddStorageVector3D(lastDesiredOrientationVector3);
+	AddStorageVector3D(desiredOrientationVector);
+}
+
+
+
+//-----------------------------AUXILARY METHODS--------------------------------//
+string GetLine(string text, int lineNo){
+    string[] lines = text.Split('\n');
+    return lines.Length >= lineNo ? lines[lineNo] : null;
+}
+public static double GetRandomNumber(double minimum, double maximum){ 
+    Random random = new Random();
+    return random.NextDouble() * (maximum - minimum) + minimum;
+}
+public static double GetDotProduct(Vector3D v1, Vector3D v2){
+	return (double) (v1.X*v2.X+v1.Y*v2.Y+v1.Z*v2.Z);
+	}
+public static Vector3D GetCrossProduct(Vector3D v1, Vector3D v2){
+	return (Vector3D) (new Vector3D((v1.Y*v2.Z)-(v1.Z*v2.Y),(v1.Z*v2.X)-(v1.X*v2.Z),(v1.X*v2.Y)-(v1.Y*v2.X)));
+	}
+public static Vector3D GetProjection(Vector3D v1, Vector3D v2)
+	{
+	return (Vector3D) (((GetDotProduct(v1,v2)/Math.Pow(v2.Length(),2))*v2));
+}
+public static double GetDegrees(double rad) {
+	return (double) (rad * (180/Math.PI));
+}
+public static double GetAngleBetweenVectors(Vector3D v1, Vector3D v2){
+	double AngleMultA = GetDotProduct(v1,v2);
+	double AngleMultB = v1.Length()*v2.Length();
+	double AngleCosinus = AngleMultA/AngleMultB;
+	double AngleBetweenVectors = GetDegrees((double)Math.Acos(AngleCosinus));
+	return (double) (AngleBetweenVectors);
+}
+public static Vector3D GetPVector(Vector3D v1){
+	const double pointAccuracy = 10000; //high accuracy causes glitch when substracting values around 7th decimal place
+	if(v1!=new Vector3D(0,0,0)){
+		v1 = new Vector3D(Math.Truncate(v1.X*pointAccuracy)/pointAccuracy,Math.Truncate(v1.Y*pointAccuracy)/pointAccuracy,Math.Truncate(v1.Z*pointAccuracy)/pointAccuracy);
+		}
+	return (Vector3D) (v1);
+}
+public static double GetPDouble(double d1){
+	const double pointAccuracy = 10000; //high accuracy causes glitch when substracting values around 7th decimal place
+	d1 = (Math.Truncate(d1*pointAccuracy))/pointAccuracy;
+	return (double) (d1);
+}
+public void ClearStorage(){
+	Storage="";
+}
+void AddStorageDouble(double d1){
+	Storage=Storage+Convert.ToString(d1)+"\n";
+}
+void AddStorageLong(long l1){
+	Storage=Storage+Convert.ToString(l1)+"\n";
+}
+void AddStorageInt(int i1){
+	Storage=Storage+Convert.ToString(i1)+"\n";
+}
+void AddStorageString(string s1){
+	Storage=Storage+s1+"\n";
+}
+void AddStorageVector3D(Vector3D v1){
+	Storage=Storage+Convert.ToString(v1.X)+","+Convert.ToString(v1.Y)+","+Convert.ToString(v1.Z)+"\n";
+}
+string ReadStorageString(int i1){
+	string storageContent = GetLine(Storage,i1-1);
+	return (string) (storageContent);
+}
+double ReadStorageDouble(int i1){
+	string storageContentA = GetLine(Storage,i1-1);
+	double storageContentB = Convert.ToDouble(storageContentA);
+	return (double) (storageContentB);
+}
+Vector3D ReadStorageVector3D(int i1){
+	string[] storageContentA = GetLine(Storage,i1-1).Split(',');
+	double[] storageContentB = new double[3];
+	storageContentB[0] = Convert.ToDouble(storageContentA[0]);
+	storageContentB[1] = Convert.ToDouble(storageContentA[1]);
+	storageContentB[2] = Convert.ToDouble(storageContentA[2]);
+	Vector3D storageContentC = new Vector3D(storageContentB[0],storageContentB[1],storageContentB[2]);
+	return (Vector3D) (storageContentC);
+}
+long ReadStorageLong(int i1){
+	string storageContentA = GetLine(Storage,i1-1);
+	double storageContentB = Convert.ToInt64(storageContentA);
+	return (long) (storageContentB);
+}
+int ReadStorageInt(int i1){
+	string storageContentA = GetLine(Storage,i1-1);
+	int storageContentB = Convert.ToInt32(storageContentA);
+	return (int) (storageContentB);
+}
+public static void CalculateDegreesFromVector(Vector3D calcVectorDeg, Vector3D forwardVectorDeg, Vector3D rightVectorDeg, out double degreesYawDeg, out double degreesPitchDeg){
+	forwardVectorDeg = GetPVector(forwardVectorDeg);
+	rightVectorDeg = GetPVector(rightVectorDeg);
+	Vector3D upVector = GetNormal(GetCrossProduct(rightVectorDeg,forwardVectorDeg));
+	Vector3D forwardProj = GetPVector(GetProjection(calcVectorDeg,forwardVectorDeg));
+	Vector3D upProj = GetPVector(GetProjection(calcVectorDeg,upVector));
+	Vector3D rightProj = GetPVector(GetProjection(calcVectorDeg,rightVectorDeg));
+	Vector3D yawSumDeg = GetPVector(forwardProj+rightProj);
+	Vector3D pitchSumDeg = GetPVector(forwardProj+upProj);
+	degreesYawDeg = GetPDouble(GetAngleBetweenVectors(yawSumDeg,forwardVectorDeg));
+	degreesPitchDeg = GetPDouble(GetAngleBetweenVectors(pitchSumDeg,forwardVectorDeg));
+	if((GetPVector(GetNormal(GetCrossProduct(yawSumDeg,forwardVectorDeg))+upVector)).Length()<0.5){
+		degreesYawDeg=-degreesYawDeg;
+		}
+	if((GetPVector(GetNormal(GetCrossProduct(pitchSumDeg,forwardVectorDeg))-rightVectorDeg)).Length()<0.5){
+		degreesPitchDeg=-degreesPitchDeg;
+		}
+}
+public static Vector3D CalculateTrajectoryPrediction(Vector3D targPosition, Vector3D targVelocty, Vector3D targAcceleration, double trajTime){
+	Vector3D predictedTrajectoryPosition = new Vector3D(0,0,0);
+	predictedTrajectoryPosition = GetPVector(targPosition+(targVelocty*trajTime)+(1/2*targAcceleration*trajTime*trajTime));
+	return (Vector3D) (predictedTrajectoryPosition);
+	}
+public static Vector3D GetAdjustmentVector(Vector3D targVector, Vector3D currVector){
+	targVector = GetNormal(targVector);
+	currVector = GetNormal(currVector);
+	Vector3D xVector1 = GetNormal(GetCrossProduct(targVector,currVector));
+	Vector3D xVector2 = GetNormal(GetCrossProduct(targVector,xVector1));
+	Vector3D adjVector = GetNormal(GetProjection(currVector,xVector2));
+	return (Vector3D) (-adjVector);
+	}
+public static Vector3D GetNormal(Vector3D ve1){
+	if(ve1!=new Vector3D(0,0,0)){
+		ve1 = GetPVector(Vector3D.Normalize(ve1));
+		}
+	if(Double.IsNaN(ve1.X)||Double.IsNaN(ve1.Y)||Double.IsNaN(ve1.Z)){
+		ve1 = new Vector3D(0,0,0);
+		}
+	return (Vector3D) (ve1);
+	}
+public static double GetClamp(double num, double min, double max){
+	num = Math.Max(Math.Min(num,max),min);
+	return (double) (num);
+	}
